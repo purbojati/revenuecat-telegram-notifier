@@ -58,10 +58,9 @@ def generate_daily_summary():
     global daily_summary
     jakarta_tz = pytz.timezone('Asia/Jakarta')
     current_time = datetime.now(jakarta_tz)
-    yesterday = (current_time - timedelta(days=1)).strftime('%Y-%m-%d')
     
     message = (
-        f"📊 Daily Summary for {yesterday} (Jakarta Time)\n\n"
+        f"📊 Daily Summary for {daily_summary['date']} (Jakarta Time)\n\n"
         f"🎉 New Purchases: {daily_summary['initial_purchases']}\n"
         f"♻️ Renewals: {daily_summary['renewals']}\n"
         f"❌ Cancellations: {daily_summary['cancellations']}\n"
@@ -73,47 +72,35 @@ def generate_daily_summary():
 
 def lambda_handler(event, context):
     try:
+        print(f"Received event: {json.dumps(event)}")
+
         # Check if this is a scheduled event for daily summary
         if event.get('detail-type') == 'Scheduled Event':
             summary_message = generate_daily_summary()
             send_telegram_message(summary_message)
-            # Reset the summary for the new day
-            global daily_summary
-            daily_summary = {
-                'date': datetime.now(pytz.timezone('Asia/Jakarta')).strftime('%Y-%m-%d'),
-                'initial_purchases': 0,
-                'renewals': 0,
-                'cancellations': 0,
-                'product_changes': 0,
-                'total_revenue': 0
-            }
             return {
                 'statusCode': 200,
-                'body': 'Daily summary sent to Telegram successfully!'
+                'body': json.dumps('Daily summary sent to Telegram successfully!')
             }
 
-        # Log the incoming event for debugging
-        print(f'Event: {event}')
+        # Handle RevenueCat webhook event
+        if 'body' in event:
+            body = json.loads(event['body'])
+        else:
+            body = event
 
-        # Check if the event structure is as expected
-        if 'event' not in event:
-            raise ValueError("No event data in the received event")
+        if 'event' not in body:
+            raise ValueError("No event data in the received webhook")
 
-        event_data = event['event']
+        event_info = body['event']
         
-        product_id = event_data.get('product_id')
-        event_type = event_data.get('type')
-        price = event_data.get('price_in_purchased_currency')
-        user_id = event_data.get('app_user_id')
-        new_product_id = event_data.get('new_product_id')
+        product_id = event_info.get('product_id', 'Unknown Product')
+        event_type = event_info.get('type', 'Unknown Event')
+        price = event_info.get('price_in_purchased_currency') or event_info.get('price', 0)
+        user_id = event_info.get('app_user_id', 'Unknown User')
+        new_product_id = event_info.get('new_product_id', 'N/A')
 
-        if product_id is None or event_type is None or price is None:
-            raise ValueError("Missing required fields in event data")
-
-        # Update daily summary
-        update_daily_summary(event_type, price)
-
-        # Determine message based on event type
+        # Format the message based on event type
         if event_type == 'INITIAL_PURCHASE':
             message = (
                 f"🎉 NEW PURCHASE\n"
@@ -143,22 +130,25 @@ def lambda_handler(event, context):
             )
         else:
             message = (
-                f"📢 OTHER EVENT\n"
+                f"📢 NDAK TAU\n"
                 f"{product_id}\n"
                 f"{event_type}\n"
                 f"Rp{int(float(price))}\n"
                 f"https://app.revenuecat.com/customers/ec85b090/{user_id}"
             )
 
+        # Update daily summary
+        update_daily_summary(event_type, price)
+
         send_telegram_message(message)
 
         return {
             'statusCode': 200,
-            'body': 'Message sent to Telegram successfully!'
+            'body': json.dumps('Message sent to Telegram successfully!')
         }
     except Exception as e:
-        print(f'Error: {e}')
+        print(f'Error: {str(e)}')
         return {
             'statusCode': 500,
-            'body': f'Error processing request: {e}'
+            'body': json.dumps(f'Error processing request: {str(e)}')
         }
